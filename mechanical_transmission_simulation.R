@@ -1,0 +1,164 @@
+remove(list = ls())
+library(deSolve)
+library(magrittr)
+
+##### Functions #####
+
+dengue_simulation = function(t, x, paras){
+  with(as.list(c(paras, x)),{
+    S_H = x["S_H"]; E_H = x["E_H"]; I_H = x["I_H"]; R_H = x["R_H"]; C_H = x["C_H"];
+    S_V = x["S_V"]; M_V = x["M_V"]; I_V = x["I_V"]; E_V = x["E_V"];
+    vec = x["vec"]; mec = x["mec"]
+    
+    lambda_V = b * p * I_V / N_H
+    if(mechanical) lambda_M = b_M * p_M * M_V / N_H
+    else lambda_M = 0 
+    
+    dS_H = (N_H - S_H) * mu_H - (lambda_V + lambda_M) * S_H
+    dE_H = (lambda_V + lambda_M) * S_H - (sigma_H + mu_H) * E_H
+    dI_H = sigma_H * E_H - (gamma + mu_H) * I_H
+    dR_H = gamma * I_H - mu_H * R_H
+    dC_H = sigma_H * E_H
+    
+    lambda_H = b * q * I_H / N_H
+    
+    dS_V = (k * N_H * (1 - a * cos(2*pi*t / T)) - S_V) * mu_V - lambda_H * S_V #/N_H
+    dM_V = lambda_H * S_V - (sigma_M + mu_V) * M_V
+    if(t >= tau_V+1){
+      dE_V = sigma_M * M_V - sigma_M * lagvalue(t - (tau_V-0.5), 7) * exp(-mu_V * tau_V) - mu_V * E_V
+      dI_V = sigma_M * lagvalue(t - (tau_V-0.5), 7) * exp(-mu_V * tau_V) - mu_V * I_V
+    }
+    else{
+      dE_V = sigma_M * M_V - sigma_M * 0 * exp(-mu_V * tau_V) - mu_V * E_V
+      dI_V = sigma_M * 0 * exp(-mu_V * tau_V) - mu_V * I_V
+    }
+    
+    dvec = lambda_V * S_H  # Those who are infected via vector transmission
+    dmec = lambda_M * S_H  # Those who are infected via mechanical transmission
+    
+    return(list(c(dS_H, dE_H, dI_H, dR_H, dC_H, dS_V, dM_V, dI_V, dE_V, dvec, dmec)))
+  })
+}
+
+rootfun <- function (t,x,params) {
+  dstate <- unlist(dengue_simulation(t,x,params))["I_H"] 
+  return(dstate - 1e-10)
+}
+
+## Find peak
+findPeak = function(x, getValue = FALSE){
+  peakIdx = -1
+  max = -Inf
+  for(i in 1:(length(x)-2)){
+    diffVal = x[i+1] - x[i]
+    
+    if((x[i+1] - x[i]) > 0){
+      if((x[i+2] - x[i+1]) <= 0 & x[i+1] > max){
+        peakIdx = i+1
+        max = x[i+1]
+      }
+    }
+  }
+  return(peakIdx)
+}
+
+##### Daily-based simulation #####
+
+## Parameters
+paras = list(mu_H = 1/(70*365), N_H = 10000, mu_V = 1/14,
+             sigma_H = 1/5, sigma_V = 1/10, sigma_M = 24/2 , # (24 - 1)
+             gamma = 1/6, k = 5, b = 0.3, p = 0.38, q = 0.38, a = 0.5,
+             T = 1*365, n_M = 3 , # (1 - 3)
+             p_M = 0.083,   # (0.083 - 0.12)
+             mechanical =  TRUE
+             )
+
+paras$b_M = paras$n_M * paras$sigma_M
+paras$N_V = paras$k * paras$N_H
+paras$tau_V = 1 / paras$sigma_V
+
+## Initial condition
+xstart= c(S_H = 0, E_H = 0, I_H = 10, R_H = 0, C_H = 0, 
+          S_V = 0, M_V = 0, I_V = 100, E_V = 0, vec = 0, mec = 0)
+xstart["S_H"] = paras$N_H - xstart["E_H"] - xstart["I_H"]
+xstart["S_V"] = paras$N_H *paras$k - xstart["M_V"] - xstart["I_V"]
+paras$start = xstart
+
+## Start solving ODE
+result = dede(xstart, 1:10^5, func = dengue_simulation, paras, method = "lsodar", rootfun = rootfun)
+result = data.frame(result)
+result$mec_rate = result$mec / (result$mec + result$vec)
+
+## The condition of no mechanical transmission
+paras$mechanical = FALSE
+result_noMec = dede(xstart, 1:10^5, func = dengue_simulation, paras, method = "lsodar", rootfun = rootfun)
+result_noMec = data.frame(result_noMec)
+result_noMec$mec_rate = result_noMec$mec / (result_noMec$mec + result_noMec$vec)
+paras$mechanical = TRUE
+
+## Plot
+layout(matrix(c(1, 6, 10, 2, 7, 11, 3, 8, 12, 4, 9, 0, 5, 0, 0), nrow = 3, ncol = 5))
+for (type in colnames(result)[2:ncol(result)]) {
+  plot(result[,type], type = "l", main = type)
+}
+remove(type)
+
+layout(matrix(c(1), nrow = 1, ncol = 1))
+# df = data.frame(k = seq(5, 1, -0.01))
+# df$susLeft = rep(NA, nrow(df))
+# for(i in 1:nrow(df)){
+#   paras$k = df$k[i]
+#   result_noMec = dede(xstart, 1:10^5, func = dengue_simulation, paras, method = "lsodar", rootfun = rootfun)
+#   result_noMec = data.frame(result_noMec)
+#   df$susLeft[i] = result_noMec$S_H[nrow(result_noMec)]
+# }
+# plot(df$k, df$susLeft, type = "l", ylab = "Susceptible left", xlab = "k", main = "Biting rate = 0.3")
+
+
+# df = data.frame(Time = seq_len(nrow(result)-1),
+#                 `Standard transmission` = result$vec[2:nrow(result)] - result$vec[1:(nrow(result)-1)],
+#                 `Mecanical transmission` = result$mec[2:nrow(result)] - result$mec[1:(nrow(result)-1)])
+# df$`Total incidence` = df$Standard.transmission + df$Mecanical.transmission
+# melt(df, id.vars = "Time", value.name = "Incidence", variable.name = "Type") %>%
+  # ggplot(aes(x = Time, y = Incidence, group = Type)) +
+  # geom_line(aes(col = Type), size = 2) +
+  # theme_light(base_size = 26, base_line_size = 0) +
+  # theme(legend.position = c(0.8, 0.8),
+  #       legend.key.width = unit(4,"line"),
+  #       legend.key.height = unit(4, "line")) +
+  # scale_color_manual(labels = c("Standard\ntransmission", "Mechanical\ntransmission", "Total\nincidence"),
+  #                    values = c("blue", "red", "black")) +
+  # labs(x = "Time (days)", y = "Daily incidence", color = "")
+
+df = data.frame(pM = seq(0, 15, by = 0.05),
+                nM3 = rep(NA, length(seq(0, 15, by = 0.05))),
+                nM2 = rep(NA, length(seq(0, 15, by = 0.05))),
+                nM1 = rep(NA, length(seq(0, 15, by = 0.05))))
+for (i in 1:nrow(df)) {
+  paras$p_M = df$pM[i] / 100
+  for (nM in 1:3) {
+    paras$b_M = nM * paras$sigma_M
+    df[i, (nM+1)] = dede(xstart, 1:10^5, func = dengue_simulation, paras, method = "lsodar", rootfun = rootfun) %>%
+                    as.data.frame() %>%
+                    {sum(.[, "mec"]) / (sum(.[, "mec"]) + sum(.[, "vec"]))}
+  }
+}
+remove(nM, i)
+df[, c(2:4)] = df[, c(2:4)] * 100
+melt(df, id.vars = "pM", value.name = "ratio", variable.name = "nM") %>%
+  ggplot(aes(x = pM, y = ratio, group = nM)) +
+  geom_line(aes(col = nM), size = 2) +
+  theme_light(base_size = 26, base_line_size = 0) +
+  theme(legend.position = c(0.2, 0.8),
+        legend.key.width = unit(4,"line"),
+        legend.key.height = unit(4, "line")) +
+  scale_color_manual(labels = c(bquote(~italic(n)[italic(M)]~"=3"), bquote(~italic(n)[italic(M)]~"=2"), bquote(~italic(n)[italic(M)]~"=1")),
+                     values = c("red", "blue", "green")) +
+  labs(x = "Probability of mechanical transmission (%)",
+       y = "Case transmitted mechanically (%)", color = "")
+
+
+result_noMec$S_H[nrow(result_noMec)]
+findPeak(result$I_H) - findPeak(result_noMec$I_H)
+result$C_H[nrow(result)] - result_noMec$C_H[nrow(result_noMec)]
+sum(result$mec) / (sum(result$mec) + sum(result$vec))
