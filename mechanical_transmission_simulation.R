@@ -3,6 +3,10 @@ library(deSolve)
 library(magrittr)
 library(ggplot2)
 library(reshape2)
+library(pheatmap)
+library(RColorBrewer)
+library(gridExtra)
+library(dplyr)
 
 
 ##### Functions #####
@@ -74,46 +78,112 @@ findPeak = function(x, getValue = FALSE){
 
 ##### Daily-based simulation #####
 
+k_list = as.character(c(1.83, 2.21, 2.75, 10))
+pM_list = as.character(c(0.02075, 0.03, 0.083, 0.12))
+vars = expand.grid(b = c(0.3, 0.5), sigma_M = c(24/2, 24/1), n_M = c(1, 3))
+vars = vars[c(-1, -2, -7, -8), ]
+infect_prop_noMec = array(NA, dim = c(length(k_list), nrow(vars)), 
+                          dimnames = list(k_list, 
+                                          apply(vars, 1, function(x) paste0("b = ", x[1], ", 1/sigma_M = 1/", x[2], ", n_M = ", x[3]))))
 
-## Parameters
-paras = list(mu_H = 1/(70*365), N_H = 10000, mu_V = 1/14,
-             sigma_H = 1/5, sigma_V = 1/10, sigma_M = 24/2 , # (24 - 1)
-             gamma = 1/6, k = 5, b = 0.3, p = 0.38, q = 0.38, a = 0.5,
-             T = 1*365, n_M = 3 , # (1 - 3)
-             p_M = 0.025,   # (0.083 - 0.12)
-             mechanical = TRUE
-             )
+gt = list()
 
-paras$b_M = paras$n_M * paras$sigma_M
-paras$N_V = paras$k * paras$N_H
-paras$tau_V = 1 / paras$sigma_V
-
-## Initial condition
-xstart= c(S_H = 0, E_H = 0, I_H = 10, R_H = 0, C_H = 0, 
-          S_V = 0, M_V = 0, I_V = 100, E_V = 0, vec = 0, mec = 0)
-xstart["S_H"] = paras$N_H - xstart["E_H"] - xstart["I_H"]
-xstart["S_V"] = paras$N_H *paras$k - xstart["M_V"] - xstart["I_V"]
-paras$start = xstart
-
-## Start solving ODE
-result = dede(xstart, 1:10^5, func = dengue_simulation, paras, method = "lsodar", rootfun = rootfun)
-result = data.frame(result)
-result$mec_ratio = result$mec / (result$mec + result$vec)
-
-## The condition of no mechanical transmission
-paras$mechanical = FALSE
-result_noMec = dede(xstart, 1:10^5, func = dengue_simulation, paras, method = "lsodar", rootfun = rootfun)
-result_noMec = data.frame(result_noMec)
-result_noMec$mec_ratio = result_noMec$mec / (result_noMec$mec + result_noMec$vec)
-paras$mechanical = TRUE
-
-## Show some information
-message(paste0("Final mechanical transmission ratio: ", tail(result$mec_ratio, 1)))
-message(paste0(round(tail(result_noMec$S_H, 1), 0), " susceptible left when simulation finished if no mechanical trasmission."))
-message(paste0("The difference between peaks of mechanical transmission pandemic and non-mechanical is ", 
-               (findPeak(result$I_H) - findPeak(result_noMec$I_H)), " days."))
-message(paste0("The difference of culmative infected number between mechanical and non-mechanical is ", 
-               (tail(result$C_H, 1) - tail(result_noMec$C_H, 1)), "."))
+for (i in 1:nrow(vars)) {
+  
+  mech_prop = peak_diff = infect_diff = array(NA, dim = c(length(k_list), length(pM_list)), 
+                                              dimnames = list(k_list, pM_list))
+  
+  for (k in k_list) {
+    for(pM in pM_list){
+      
+  
+      ## Parameters
+      paras = list(mu_H = 1/(70*365), N_H = 10000, mu_V = 1/14,
+                   sigma_H = 1/5, sigma_V = 1/10, sigma_M = 24/1 , # (24 ~ 1)
+                   gamma = 1/6, k = 1.83, b = 0.3, p = 0.38, q = 0.38, a = 0.5,
+                   T = 1*365, n_M = 1 , # (1 ~ 3)
+                   p_M = 0.12,   # (0.083 ~ 0.12)
+                   mechanical = TRUE
+                   )
+      
+      ## For different variable combinations
+      paras$k = as.numeric(k)
+      paras$p_M = as.numeric(pM)
+      paras$b = vars$b[i]
+      paras$sigma_M = vars$sigma_M[i]
+      paras$n_M = vars$n_M[i]
+      
+      ## other parameters
+      paras$b_M = paras$n_M * paras$sigma_M
+      paras$N_V = paras$k * paras$N_H
+      paras$tau_V = 1 / paras$sigma_V
+      
+      ## Initial condition
+      xstart= c(S_H = 0, E_H = 0, I_H = 10, R_H = 0, C_H = 0, 
+                S_V = 0, M_V = 0, I_V = 100, E_V = 0, vec = 0, mec = 0)
+      xstart["S_H"] = paras$N_H - xstart["E_H"] - xstart["I_H"]
+      xstart["S_V"] = paras$N_H * paras$k - xstart["M_V"] - xstart["I_V"]
+      paras$start = xstart
+      
+      ## Start solving ODE
+      result = dede(xstart, 1:10^5, func = dengue_simulation, paras, method = "lsodar", rootfun = rootfun)
+      result = data.frame(result)
+      result$mec_ratio = result$mec / (result$mec + result$vec)
+      
+      ## The condition of no mechanical transmission
+      paras$mechanical = FALSE
+      result_noMec = dede(xstart, 1:10^5, func = dengue_simulation, paras, method = "lsodar", rootfun = rootfun)
+      result_noMec = data.frame(result_noMec)
+      result_noMec$mec_ratio = result_noMec$mec / (result_noMec$mec + result_noMec$vec)
+      paras$mechanical = TRUE
+      
+      ## Show some information
+      # message(paste0("Final mechanical transmission proportion: ", tail(result$mec_ratio, 1)))
+      # message(paste0(round((1-tail(result_noMec$S_H, 1) / paras$start["S_H"]) * 100, 2), 
+      #                "% susceptible were infected when simulation finished if no mechanical trasmission."))
+      # message(paste0("The difference between peaks of mechanical transmission pandemic and non-mechanical is ",
+      #                (findPeak(result$I_H) - findPeak(result_noMec$I_H)), " days."))
+      # message(paste0("The difference of culmative infected number between mechanical and non-mechanical is ", 
+      #                (tail(result$C_H, 1) - tail(result_noMec$C_H, 1)), "."))
+      
+      mech_prop[k, pM] = tail(result$mec, 1) / tail(result$C_H, 1)
+      peak_diff[k, pM] = findPeak(result$I_H) - findPeak(result_noMec$I_H)
+      if(abs(peak_diff[k, pM]) > 180 | peak_diff[k, pM] == 0) peak_diff[k, pM] = NA
+      infect_diff[k, pM] = (tail(result$C_H, 1) - tail(result_noMec$C_H, 1)) / paras$N_H
+      
+      
+    }
+    
+    infect_prop_noMec[k, i] = (1-tail(result_noMec$S_H, 1) / paras$start["S_H"]) * 100
+    remove(result, result_noMec)
+  }
+  
+  gt[[i*3-2]] = pheatmap(mech_prop, main = paste0("b = ", paras$b, ", 1/simga_M = ", 24/paras$sigma_M, "/24", ", n_M = ", paras$n_M), angle_col = 0, 
+                         color = colorRampPalette(brewer.pal(n = 5, name = "OrRd"))(100),
+                         display_numbers = round(mech_prop, 3), fontsize_number = 14, fontsize = 14, 
+                         #breaks = breakList, 
+                         cluster_rows = FALSE, cluster_cols = FALSE, border_color = "white")[[4]]
+  gt[[i*3-1]] = pheatmap(peak_diff, main = paste0("b = ", paras$b, ", 1/simga_M = ", 24/paras$sigma_M, "/24", ", n_M = ", paras$n_M), angle_col = 0, 
+                         color = rev(colorRampPalette(brewer.pal(n = 5, name = "OrRd"))(100)),
+                         display_numbers = peak_diff, fontsize_number = 14, fontsize = 14, 
+                         #breaks = breakList, 
+                         cluster_rows = FALSE, cluster_cols = FALSE, border_color = "white")[[4]]
+  gt[[i*3]] = pheatmap(infect_diff, main = paste0("b = ", paras$b, ", 1/simga_M = ", 24/paras$sigma_M, "/24", ", n_M = ", paras$n_M), angle_col = 0, 
+                       color = colorRampPalette(brewer.pal(n = 5, name = "OrRd"))(100),
+                       display_numbers = round(infect_diff, 3), fontsize_number = 14, fontsize = 14, 
+                       #breaks = breakList, 
+                       cluster_rows = FALSE, cluster_cols = FALSE, border_color = "white")[[4]]
+  
+  remove(peak_diff, mech_prop, infect_diff, paras)
+}
+remove(k, pM, i)
+png("combinations.png", width = 3000, height = 4000, res = 200)
+grid.arrange(arrangeGrob(grobs= gt, ncol=3), 
+             top = paste("Mechanical transmission proportion", "Peak day delay compare to non-mech", "Total infected proportion difference", 
+                         sep = "                                                              "),
+             bottom = paste("p_M", "p_M", "p_M", 
+                            sep = "                                                                                                        "))
+dev.off()
 
 
 ##### Plots #####
@@ -139,28 +209,37 @@ layout(matrix(c(1), nrow = 1, ncol = 1))
 # plot(df$k, df$susLeft, type = "l", ylab = "Susceptible left", xlab = "k", main = "Biting rate = 0.3")
 
 
-## daily incidence plot (Figure S4A)
+## daily incidence plot (Figure 4A)
+
 df = data.frame(Time = seq_len(nrow(result)-1),
                 `Standard transmission` = result$vec[2:nrow(result)] - result$vec[1:(nrow(result)-1)],
                 `Mecanical transmission` = result$mec[2:nrow(result)] - result$mec[1:(nrow(result)-1)])
 df$`Total incidence` = df$Standard.transmission + df$Mecanical.transmission
+df$`Total incidence w/o mechanical transmission` = result_noMec$vec[2:nrow(result)] - result_noMec$vec[1:(nrow(result)-1)] + 
+                                                      result_noMec$mec[2:nrow(result)] - result_noMec$mec[1:(nrow(result)-1)]
+                                                     
 melt(df, id.vars = "Time", value.name = "Incidence", variable.name = "Type") %>%
+  mutate(lineType = sub("Standard.transmission|Mecanical.transmission|Total incidence", "a", Type)) %>% 
+  mutate(lineType = sub("a w/o mechanical transmission", "b", lineType)) %>% 
+  # mutate(lineType = as.numeric(lineType)) %>% 
   ggplot(aes(x = Time, y = Incidence, group = Type)) +
-  geom_line(aes(col = Type), size = 2) +
+  geom_line(aes(col = Type, linetype = lineType), size = 2) +
+  guides(linetype = FALSE) + 
   theme_light(base_size = 26, base_line_size = 0) +
   theme(legend.position = c(0.8, 0.8),
         legend.key.width = unit(4,"line"),
         legend.key.height = unit(4, "line")) +
-  scale_color_manual(labels = c("Standard\ntransmission", "Mechanical\ntransmission", "Total\nincidence"),
-                     values = c("blue", "red", "black")) +
+  scale_color_manual(labels = c("Standard\ntransmission", "Mechanical\ntransmission", "Total\nincidence", 
+                                "Total incidence \nw/o mechanical\n transmission"),
+                     values = c("blue", "red", "black", "grey")) +
   labs(x = "Time (days)", y = "Daily incidence", color = "")
 
 
-## figure S4B
+## figure 4B
 df = data.frame(pM = seq(0, 15, by = 0.05),
-                nM3 = rep(NA, length(seq(0, 15, by = 0.05))),
+                nM1 = rep(NA, length(seq(0, 15, by = 0.05))),
                 nM2 = rep(NA, length(seq(0, 15, by = 0.05))),
-                nM1 = rep(NA, length(seq(0, 15, by = 0.05))))
+                nM3 = rep(NA, length(seq(0, 15, by = 0.05))))
 for (i in 1:nrow(df)) {
   paras$p_M = df$pM[i] / 100
   for (nM in 1:3) {
@@ -171,6 +250,7 @@ for (i in 1:nrow(df)) {
   }
 }
 remove(nM, i)
+
 df[, c(2:4)] = df[, c(2:4)] * 100
 melt(df, id.vars = "pM", value.name = "ratio", variable.name = "nM") %>%
   ggplot(aes(x = pM, y = ratio, group = nM)) +
@@ -179,9 +259,7 @@ melt(df, id.vars = "pM", value.name = "ratio", variable.name = "nM") %>%
   theme(legend.position = c(0.2, 0.8),
         legend.key.width = unit(4,"line"),
         legend.key.height = unit(4, "line")) +
-  scale_color_manual(labels = c(bquote(~italic(n)[italic(M)]~"=3"), bquote(~italic(n)[italic(M)]~"=2"), bquote(~italic(n)[italic(M)]~"=1")),
+  scale_color_manual(labels = c(bquote(~italic(n)[italic(M)]~"=1"), bquote(~italic(n)[italic(M)]~"=2"), bquote(~italic(n)[italic(M)]~"=3")),
                      values = c("red", "blue", "green")) +
   labs(x = "Probability of mechanical transmission (%)",
        y = "Case transmitted mechanically (%)", color = "")
-
-
