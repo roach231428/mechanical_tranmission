@@ -261,5 +261,5 @@ melt(df, id.vars = "pM", value.name = "ratio", variable.name = "nM") %>%
         legend.key.height = unit(4, "line")) +
   scale_color_manual(labels = c(bquote(~italic(n)[italic(M)]~"=1"), bquote(~italic(n)[italic(M)]~"=2"), bquote(~italic(n)[italic(M)]~"=3")),
                      values = c("red", "blue", "green")) +
-  labs(x = "Probability of mechanical transmission (%)",
+  labs(x = "Percentage of cases transmitted mechanically (%)",
        y = "Case transmitted mechanically (%)", color = "")
