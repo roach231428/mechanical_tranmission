@@ -86,6 +86,27 @@ plot_variables = function(result){
   layout(matrix(c(1), nrow = 1, ncol = 1))
 }
 
+
+##### Kaohsiung variables #####
+
+paras = list(mu_H = 1/(70*365), N_H = 10000, mu_V = 1/14,
+             sigma_H = 1/5, sigma_V = 1/10, sigma_M = 24/1 , # (24 ~ 1)
+             gamma = 1/6, b = 0.3, p = 0.38, q = 0.38, a = 0, k = 2, 
+             p_M = 0.1, T = 1*365, n_M = 1 , # (1 ~ 3)
+             mechanical = FALSE
+)
+paras$b_M = paras$n_M * paras$sigma_M
+paras$tau_V = 1 / paras$sigma_V
+paras$N_V = paras$k * paras$N_H
+
+xstart= c(S_H = 0, E_H = 0, I_H = 1, R_H = 0, C_H = 0, 
+          S_V = 0, M_V = 0, I_V = 0, E_V = 0, vec = 0, mec = 0)
+xstart["S_H"] = paras$N_H - xstart["E_H"] - xstart["I_H"]
+xstart["S_V"] = paras$N_H * paras$k - xstart["M_V"] - xstart["I_V"]
+paras$start = xstart
+
+result_noMec = dede(xstart, 1:10^5, func = dengue_simulation, paras, method = "lsodar", rootfun = rootfun) %>% data.frame()
+
 ##### Daily-based simulation #####
 
 k_list = as.character(c(2, 2.5, 3, 5))
